@@ -1,6 +1,7 @@
 name: animated_reorderable_list_view
 description: "Animated Reorderable List View package project."
 version: 1.0.0
+repository: https://github.com/t-fuchi/animated_reorderable_list_view.git
 email: fuchi@fuchi.com
 
 environment:
