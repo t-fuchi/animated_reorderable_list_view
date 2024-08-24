@@ -1,0 +1,363 @@
+// ignore_for_file: invalid_use_of_protected_member
+
+library animated_reorderable_list_view;
+
+import 'dart:math';
+import 'package:flutter/material.dart';
+
+class AnimatedReorderableListView extends ReorderableListView {
+  State state;
+  List<Object> items;
+  List<Widget> children;
+  Widget Function(AnimationController, Widget)?
+      buildInsertAnimationWidget;
+  Widget Function(AnimationController, Widget)?
+      buildRemoveAnimationWidget;
+  AnimationController animationController;
+  late AnimationStatusListener _listener;
+
+  static List<Function(AnimationController, Widget)?> buildList = [];
+
+  AnimatedReorderableListView({
+    super.key,
+    required this.state,
+    required this.items,
+    required this.animationController,
+    required this.children,
+    required super.onReorder,
+    this.buildInsertAnimationWidget,
+    this.buildRemoveAnimationWidget,
+  }) : super(children: process(animationController, children)) {
+    buildInsertAnimationWidget ??=
+        (AnimationController animationController, Widget child) {
+      return SlideTransition(
+        key: GlobalKey(),
+        position: Tween<Offset>(begin: const Offset(1.0, 0.0), end: Offset.zero)
+            .animate(CurvedAnimation(
+          parent: animationController,
+          curve: Curves.easeInOut,
+        )),
+        child: child,
+      );
+    };
+    buildRemoveAnimationWidget ??=
+        (AnimationController animationController, Widget child) {
+      return SlideTransition(
+        key: GlobalKey(),
+        position: Tween<Offset>(begin: Offset.zero, end: const Offset(1.0, 0.0))
+            .animate(CurvedAnimation(
+          parent: animationController,
+          curve: Curves.easeInOut,
+        )),
+        child: child,
+      );
+    };
+  }
+
+  static List<Widget> process(
+      AnimationController animationController, List<Widget> children) {
+    if (buildList.isEmpty) {
+      buildList = List.generate(children.length, (_) => null);
+    }
+    for (int i = 0; i < children.length; ++i) {
+      if (buildList[i] != null) {
+        children[i] = buildList[i]!(animationController, children[i]);
+      }
+    }
+    return children;
+  }
+
+  void insert(int index, Object item,
+      [Widget Function(Widget widget)? buildItem]) {
+    if (0 <= index && index <= items.length) {
+      animationController.reset();
+      items.insert(index, item);
+      buildList = List.generate(items.length, (_) => null);
+      if (buildItem == null) {
+        buildList[index] = buildInsertAnimationWidget;
+      } else {
+        buildList[index] =
+            (c, w) => buildInsertAnimationWidget!(c, buildItem(w));
+      }
+      Animation<Offset> downAnimation =
+          Tween<Offset>(begin: const Offset(0.0, -1.0), end: Offset.zero)
+              .animate(CurvedAnimation(
+        parent: animationController,
+        curve: Curves.easeInOut,
+      ));
+      for (int i = index + 1; i < items.length; ++i) {
+        buildList[i] = (animationController, widget) => SlideTransition(
+              key: GlobalKey(),
+              position: downAnimation,
+              child: widget,
+            );
+      }
+      state.setState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _listener = (AnimationStatus status) {
+          if (status == AnimationStatus.completed) {
+            animationController.removeStatusListener(_listener);
+            for (int i = 0; i < buildList.length; ++i) {
+              buildList[i] = null;
+            }
+            state.setState(() {});
+          }
+        };
+        animationController.addStatusListener(_listener);
+        animationController.forward();
+      });
+    }
+  }
+
+  void removeAt(int index, [Widget Function(Widget widget)? buildItem]) {
+    if (0 <= index && index < children.length) {
+      animationController.reset();
+      if (buildItem == null) {
+        buildList[index] = buildRemoveAnimationWidget;
+      } else {
+        buildList[index] =
+            (c, w) => buildRemoveAnimationWidget!(c, buildItem(w));
+      }
+      Animation<Offset> upAnimation =
+          Tween<Offset>(begin: Offset.zero, end: const Offset(0.0, -1.0))
+              .animate(CurvedAnimation(
+        parent: animationController,
+        curve: Curves.easeInOut,
+      ));
+      for (int i = index + 1; i < children.length; ++i) {
+        buildList[i] = (animationController, widget) => SlideTransition(
+              key: GlobalKey(),
+              position: upAnimation,
+              child: widget,
+            );
+      }
+      state.setState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _listener = (AnimationStatus status) {
+          if (status == AnimationStatus.completed) {
+            animationController.removeStatusListener(_listener);
+            items.removeAt(index);
+            children.removeAt(index);
+            for (int i = 0; i < buildList.length; ++i) {
+              buildList[i] = null;
+            }
+            state.setState(() {});
+          }
+        };
+        animationController.addStatusListener(_listener);
+        animationController.forward();
+      });
+    }
+  }
+
+  void removeItemsAt(Set<int> indexes,
+      [Widget Function(Widget widget)? buildItem]) {
+    if (indexes.isEmpty) return;
+    animationController.reset();
+    int count = 0;
+    for (int index = 0; index < children.length; ++index) {
+      if (indexes.contains(index)) {
+        count += 1;
+        if (buildItem == null) {
+          buildList[index] = buildRemoveAnimationWidget;
+        } else {
+          buildList[index] =
+              (c, w) => buildRemoveAnimationWidget!(c, buildItem(w));
+        }
+      } else if (0 < count) {
+        Animation<Offset> upAnimation =
+            Tween<Offset>(begin: Offset.zero, end: Offset(0.0, -1.0 * count))
+                .animate(CurvedAnimation(
+          parent: animationController,
+          curve: Curves.easeInOut,
+        ));
+        buildList[index] = (animationController, widget) => SlideTransition(
+              key: GlobalKey(),
+              position: upAnimation,
+              child: widget,
+            );
+      }
+    }
+    state.setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _listener = (AnimationStatus status) {
+        if (status == AnimationStatus.completed) {
+          animationController.removeStatusListener(_listener);
+          for (int index in (indexes.toList()..sort()).reversed.toList()) {
+            children.removeAt(index);
+            items.removeAt(index);
+          }
+          for (int i = 0; i < buildList.length; ++i) {
+            buildList[i] = null;
+          }
+          state.setState(() {});
+        }
+      };
+      animationController.addStatusListener(_listener);
+      animationController.forward();
+    });
+  }
+
+  void move(int fromIndex, int toIndex,
+      [Widget Function(Widget widget)? buildItem]) {
+    if (fromIndex < 0 ||
+        toIndex < 0 ||
+        children.length <= fromIndex ||
+        children.length <= toIndex) {
+      return;
+    }
+
+    if (fromIndex < toIndex) {
+      items.insert(toIndex + 1, items[fromIndex]);
+      buildList.insert(toIndex + 1, null);
+    }
+    // toIndex < fromIndex
+    else {
+      items.insert(toIndex, items[fromIndex]);
+      buildList.insert(toIndex, null);
+    }
+
+    animationController.reset();
+    if (fromIndex < toIndex) {
+      if (buildItem == null) {
+        buildList[fromIndex] = buildRemoveAnimationWidget;
+      } else {
+        buildList[fromIndex] =
+            (c, w) => buildRemoveAnimationWidget!(c, buildItem(w));
+      }
+      Animation<Offset> upAnimation =
+          Tween<Offset>(begin: Offset.zero, end: const Offset(0.0, -1.0))
+              .animate(CurvedAnimation(
+        parent: animationController,
+        curve: Curves.easeInOut,
+      ));
+      for (int i = fromIndex + 1; i <= toIndex; ++i) {
+        buildList[i] = (animationController, widget) => SlideTransition(
+              key: GlobalKey(),
+              position: upAnimation,
+              child: widget,
+            );
+      }
+      buildList[toIndex + 1] = (c, w) => SlideTransition(
+          key: GlobalKey(),
+          position: const AlwaysStoppedAnimation(Offset(0, -1)),
+          child: buildInsertAnimationWidget!(
+              c, buildItem == null ? w : buildItem(w)));
+      for (int i = toIndex + 2; i < buildList.length; ++i) {
+        buildList[i] = (animationController, widget) => SlideTransition(
+            key: GlobalKey(),
+            position: const AlwaysStoppedAnimation(Offset(0, -1)),
+            child: widget);
+      }
+    }
+    // toIndex < fromIndex
+    else {
+      if (buildItem == null) {
+        buildList[toIndex] = buildInsertAnimationWidget;
+      } else {
+        buildList[toIndex] =
+            (c, w) => buildInsertAnimationWidget!(c, buildItem(w));
+      }
+      Animation<Offset> downAnimation =
+          Tween<Offset>(begin: const Offset(0, -1), end: Offset.zero)
+              .animate(CurvedAnimation(
+        parent: animationController,
+        curve: Curves.easeInOut,
+      ));
+      for (int i = toIndex + 1; i <= fromIndex; ++i) {
+        buildList[i] = (animationController, widget) => SlideTransition(
+              key: GlobalKey(),
+              position: downAnimation,
+              child: widget,
+            );
+      }
+      buildList[fromIndex + 1] = (x, w) => SlideTransition(
+          key: GlobalKey(),
+          position: const AlwaysStoppedAnimation(Offset(0, -1)),
+          child: buildRemoveAnimationWidget!(
+              x, buildItem == null ? w : buildItem(w)));
+      for (int i = fromIndex + 2; i < buildList.length; ++i) {
+        buildList[i] = (animationController, widget) => SlideTransition(
+            key: GlobalKey(),
+            position: const AlwaysStoppedAnimation(Offset(0, -1)),
+            child: widget);
+      }
+    }
+    state.setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _listener = (AnimationStatus status) {
+        if (status == AnimationStatus.completed) {
+          animationController.removeStatusListener(_listener);
+          if (fromIndex < toIndex) {
+            items.removeAt(fromIndex);
+            buildList.removeAt(fromIndex);
+          }
+          // toIndex < fromIndex
+          else {
+            items.removeAt(fromIndex + 1);
+            buildList.removeAt(fromIndex + 1);
+          }
+          for (int i = 0; i < buildList.length; ++i) {
+            buildList[i] = null;
+          }
+          state.setState(() {});
+        }
+      };
+      animationController.addStatusListener(_listener);
+      animationController.forward();
+    });
+  }
+
+  void swap(int i1, int i2, [Widget Function(Widget widget)? buildItem]) {
+    if (0 <= i1 &&
+        i1 < children.length &&
+        0 <= i2 &&
+        i2 < children.length &&
+        i1 != i2) {
+      animationController.reset();
+      if (buildItem == null) {
+        buildList[i1] = buildRemoveAnimationWidget;
+        buildList[i2] = buildRemoveAnimationWidget;
+      } else {
+        buildList[i1] = (c, w) => buildRemoveAnimationWidget!(c, buildItem(w));
+        buildList[i2] = (c, w) => buildRemoveAnimationWidget!(c, buildItem(w));
+      }
+      state.setState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _listener = (AnimationStatus status) {
+          if (status == AnimationStatus.completed) {
+            animationController.removeStatusListener(_listener);
+            animationController.reset();
+            Object item = items[max(i1, i2)];
+            items[max(i1, i2)] = items[min(i1, i2)];
+            items[min(i1, i2)] = item;
+            if (buildItem == null) {
+              buildList[i1] = buildInsertAnimationWidget;
+              buildList[i2] = buildInsertAnimationWidget;
+            } else {
+              buildList[i1] =
+                  (c, w) => buildInsertAnimationWidget!(c, buildItem(w));
+              buildList[i2] =
+                  (c, w) => buildInsertAnimationWidget!(c, buildItem(w));
+            }
+            state.setState(() {});
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _listener = (AnimationStatus status) {
+                if (status == AnimationStatus.completed) {
+                  animationController.removeStatusListener(_listener);
+                  buildList[i1] = null;
+                  buildList[i2] = null;
+                  state.setState(() {});
+                }
+              };
+              animationController.addStatusListener(_listener);
+              animationController.forward();
+            });
+          }
+        };
+        animationController.addStatusListener(_listener);
+        animationController.forward();
+      });
+    }
+  }
+}
